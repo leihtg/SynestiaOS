@@ -2,8 +2,8 @@
 // Created by XingfengYang on 2020/6/12.
 //
 
-#include "arm/page.h"
 #include "kernel/kheap.h"
+#include "arm/page.h"
 #include "kernel/log.h"
 #include "kernel/sched.h"
 #include "libc/stdlib.h"
@@ -162,7 +162,9 @@ KernelStatus heap_default_free(struct Heap *heap, void *ptr) {
         }
     }
     heap->freeCallback(heap, ptr);
+    memset(ptr, 0, currentArea->size);
     ptr = nullptr;
+
     return OK;
 }
 
@@ -206,17 +208,17 @@ KernelStatus heap_create(Heap *heap, uint32_t addr, uint32_t size) {
     heap->usingListHead = usingHead;
 
     heap->maxSizeLimit = size;
-    heap->operations.setFreeCallback = heap_default_set_free_callback;
-    heap->operations.setAllocCallback = heap_default_set_alloc_callback;
+    heap->operations.setFreeCallback = (HeapOperationSetFreeCallback) heap_default_set_free_callback;
+    heap->operations.setAllocCallback = (HeapOperationSetAllocCallback) heap_default_set_alloc_callback;
 
-    heap->allocCallback = heap_default_alloc_callback;
-    heap->freeCallback = heap_default_free_callback;
+    heap->allocCallback = (HeapAllocCallback) heap_default_alloc_callback;
+    heap->freeCallback = (HeapFreeCallback) heap_default_free_callback;
 
-    heap->operations.alloc = heap_default_alloc;
-    heap->operations.allocAligned = heap_default_alloc_aligned;
-    heap->operations.calloc = heap_default_count_alloc;
-    heap->operations.realloc = heap_default_realloc;
-    heap->operations.free = heap_default_free;
+    heap->operations.alloc = (HeapOperationAlloc) heap_default_alloc;
+    heap->operations.allocAligned = (HeapOperationAllocAligned) heap_default_alloc_aligned;
+    heap->operations.calloc = (HeapOperationCountAlloc) heap_default_count_alloc;
+    heap->operations.realloc = (HeapOperationReAlloc) heap_default_realloc;
+    heap->operations.free = (HeapOperationFree) heap_default_free;
 
     heap->statistics.allocatedBlockCount = 0;
     heap->statistics.allocatedSize = 0;

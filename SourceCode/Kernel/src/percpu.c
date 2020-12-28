@@ -2,9 +2,9 @@
 // Created by XingfengYang on 2020/6/30.
 //
 
+#include "kernel/percpu.h"
 #include "kernel/kheap.h"
 #include "kernel/log.h"
-#include "kernel/percpu.h"
 #include "kernel/thread.h"
 
 extern Heap kernelHeap;
@@ -60,20 +60,37 @@ KernelStatus percpu_create(uint32_t cpuNum) {
         return ERROR;
     }
     for (uint32_t cpuId = 0; cpuId < cpuNum; cpuId++) {
-        perCpu[cpuId].operations.init = percpu_default_init;
-        perCpu[cpuId].operations.insertThread = percpu_default_insert_thread;
-        perCpu[cpuId].operations.removeThread = percpu_default_remove_thread;
-        perCpu[cpuId].operations.getNextThread = percpu_default_get_next_thread;
+        perCpu[cpuId].operations.init = (PerCpuInit) percpu_default_init;
+        perCpu[cpuId].operations.insertThread = (PerCpuInsertThread) percpu_default_insert_thread;
+        perCpu[cpuId].operations.removeThread = (PerCpuRemoveThread) percpu_default_remove_thread;
+        perCpu[cpuId].operations.getNextThread = (PerCpuGetNextThread) percpu_default_get_next_thread;
+        if (cpuId == 0) {
+            perCpu[cpuId].node.prev = nullptr;
+            perCpu[cpuId].node.next = &perCpu[cpuId + 1].node;
+        } else if (cpuId == cpuNum - 1) {
+            perCpu[cpuId].node.next = nullptr;
+            perCpu[cpuId].node.prev = &perCpu[cpuId - 1].node;
+        } else {
+            perCpu[cpuId].node.next = &perCpu[cpuId + 1].node;
+            perCpu[cpuId].node.prev = &perCpu[cpuId - 1].node;
+        }
     }
     return OK;
 }
 
 PerCpu *percpu_get(CpuNum cpuNum) { return &perCpu[cpuNum]; }
 
-PerCpu *percpu_min_priority() {
-    PerCpu *min = &perCpu[0];
-    for (uint32_t cpuId = 0; cpuId < CPU_EXISTS_NUM; cpuId++) {
-        if (perCpu[cpuId].priority < min->priority) {
+PerCpu *percpu_min_priority(uint32_t cpuMask) {
+    int minMaskCPU = 0;
+    for (int i = 0; i < 32; i++) {
+        if (0x1 << i & cpuMask) {
+            minMaskCPU = i;
+            break;
+        }
+    }
+    PerCpu *min = &perCpu[minMaskCPU];
+    for (uint32_t cpuId = minMaskCPU; cpuId < CPU_EXISTS_NUM; cpuId++) {
+        if (perCpu[cpuId].priority < min->priority && (0x1 << cpuId & cpuMask)) {
             min = &perCpu[cpuId];
         }
     }

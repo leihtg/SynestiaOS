@@ -2,13 +2,13 @@
 // Created by XingfengYang on 2020/7/7.
 //
 
+#include "libgui/gui_panel.h"
 #include "kernel/log.h"
 #include "libc/stdlib.h"
 #include "libgfx/gfx2d.h"
 #include "libgui/gui_button.h"
 #include "libgui/gui_container.h"
 #include "libgui/gui_label.h"
-#include "libgui/gui_panel.h"
 
 extern uint32_t GFX2D_BUFFER[1024 * 768];
 
@@ -18,7 +18,7 @@ void gui_panel_create(GUIPanel *panel) {
     panel->component.colorMode = RGB;
     panel->component.node.next = nullptr;
     panel->component.node.prev = nullptr;
-    panel->children = nullptr;
+    kvector_allocate(&panel->children);
 
     panel->component.position.x = 0;
     panel->component.position.y = 0;
@@ -46,8 +46,7 @@ void gui_panel_create(GUIPanel *panel) {
     panel->component.foreground.g = (FLUENT_PRIMARY_FORE_COLOR >> 8) & 0xFF;
     panel->component.foreground.b = FLUENT_PRIMARY_FORE_COLOR & 0xFF;
 
-    panel->children = kvector_allocate();
-    if (panel->children == nullptr) {
+    if (panel->children.data == nullptr) {
         LogError("[GUI]: panel create failed, unable to allocate children vector\n");
     }
 
@@ -60,16 +59,16 @@ void gui_panel_init(GUIPanel *panel, uint32_t x, uint32_t y) {
 }
 
 void gui_panel_add_children(GUIPanel *panel, GUIComponent *component) {
-    if (panel->children != nullptr) {
-        kvector_add(panel->children, &(component->node));
+    if (panel->children.data != nullptr) {
+        panel->children.operations.add(&panel->children, &component->node);
     }
 }
 
 void gui_panel_draw_children(GUIPanel *panel) {
-    KernelVector *children = panel->children;
-    if (children != nullptr) {
-        for (uint32_t i = 0; i < children->index; i++) {
-            ListNode *listNode = children->node[i];
+    KernelVector children = panel->children;
+    if (children.data != nullptr) {
+        for (uint32_t i = 0; i < children.size; i++) {
+            ListNode *listNode = children.data[i];
             GUIComponent *component = getNode(listNode, GUIComponent, node);
             switch (component->type) {
                 case BUTTON: {
@@ -130,7 +129,7 @@ void gui_panel_draw(GUIPanel *panel) {
                                                panel->component.position.x + panel->component.size.width,
                                                panel->component.position.y + panel->component.size.height,
                                                panel->component.background.r << 16 |
-                                                       panel->component.background.g << 8 | panel->component.background.b);
+                                               panel->component.background.g << 8 | panel->component.background.b);
         }
 
         // 2. draw children

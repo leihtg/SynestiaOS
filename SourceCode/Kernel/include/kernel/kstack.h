@@ -6,8 +6,8 @@
 #define __KERNEL_KSTACK_H__
 
 #include "kernel/type.h"
-#include "libc/stdint.h"
 #include "libc/stdbool.h"
+#include "libc/stdint.h"
 
 #define DEFAULT_KERNEL_STACK_SIZE 32 * KB
 
@@ -43,8 +43,8 @@ typedef struct KernelStack {
     VirtualAddress top;
     VirtualAddress *virtualMemoryAddress;
     StackOperations operations;
-} __attribute__((packed)) KernelStack;
+} KernelStack;
 
-KernelStack *kstack_allocate();
+KernelStack *kstack_allocate(struct KernelStack *kernelStack);
 
 #endif//__KERNEL_KSTACK_H__

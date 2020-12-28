@@ -1,80 +1,147 @@
 //
 // Created by XingfengYang on 2020/11/23.
 //
-#include "arm/page.h"
 #include "kernel/slab.h"
-#include "kernel/log.h"
+#include "arm/page.h"
+#include "kernel/kheap.h"
 #include "kernel/kobject.h"
+#include "kernel/log.h"
 #include "kernel/mutex.h"
 #include "kernel/semaphore.h"
-#include "kernel/Thread.h"
+#include "kernel/thread.h"
 #include "kernel/type.h"
 
 extern PhysicalPageAllocator kernelPageAllocator;
+extern Heap kernelHeap;
 
-uint32_t get_kernel_object_size(KernelObjectType type) {
-    switch (type) {
-        case KERNEL_OBJECT_THREAD:
-            return sizeof(Thread);
-        case KERNEL_OBJECT_MUTEX:
-            return sizeof(Mutex);
-        case KERNEL_OBJECT_SEMAPHORE:
-            return sizeof(Semaphore);
-        case KERNEL_OBJECT_FILE_DESCRIPTOR:
-            return sizeof(FileDescriptor);
-        default:
-            return 0;
+void slab_default_alloc_callback(struct Slab *slab, KernelObjectType type, void *ptr, uint32_t reUse) {
+    if (reUse) {
+        slab->statistics.free[type]--;
+    } else {
+        slab->statistics.count[type]++;
     }
 }
 
-void slab_default_alloc_callback(struct Slab *slab, KernelObjectType type, void *ptr) {
+void slab_default_free_callback(struct Slab *slab, KernelObjectType type, void *ptr) {
+    slab->statistics.free[type]++;
 }
 
-void slab_default_free_callback(struct Slab *slab, KernelObjectType type, void *ptr) {
+void *slab_default_alloc_kernel_object(struct Slab *slab, KernelObjectType type) {
+    switch (type) {
+        case KERNEL_OBJECT_THREAD: {
+            Thread *thread = kernelHeap.operations.alloc(&kernelHeap, sizeof(Thread));
+            klist_append(slab->kernelObjects[type], &thread->object.list);
+            thread->object.status = USING;
+            return thread;
+        }
+        case KERNEL_OBJECT_MUTEX: {
+            Mutex *mutex = kernelHeap.operations.alloc(&kernelHeap, sizeof(Mutex));
+            klist_append(slab->kernelObjects[type], &mutex->object.list);
+            mutex->object.status = USING;
+            return mutex;
+        }
+        case KERNEL_OBJECT_SEMAPHORE: {
+            Semaphore *semaphore = kernelHeap.operations.alloc(&kernelHeap, sizeof(Semaphore));
+            klist_append(slab->kernelObjects[type], &semaphore->object.list);
+            semaphore->object.status = USING;
+            return semaphore;
+        }
+        case KERNEL_OBJECT_FILE_DESCRIPTOR: {
+            FileDescriptor *fileDescriptor = kernelHeap.operations.alloc(&kernelHeap, sizeof(FileDescriptor));
+            klist_append(slab->kernelObjects[type], &fileDescriptor->object.list);
+            fileDescriptor->object.status = USING;
+            return fileDescriptor;
+        }
+    }
 }
 
 void *slab_default_alloc(struct Slab *slab, KernelObjectType type) {
     // can not found any kernel object from kernel object lists
     if (slab->kernelObjects[type] == nullptr) {
         // alloc a new kernel object from heap and link it to kernel object list
-        // TODO:
+        void *ptr = slab_default_alloc_kernel_object(slab, type);
+        slab->allocCallback(slab, type, ptr, 0);
+        return ptr;
     } else {
         KernelObject *kernelObject = slab->kernelObjects[type];
 
         // the first of kernel object list is free
         if (kernelObject->status == FREE) {
             // just use it, and mark it as used
-            // TODO:
-
+            kernelObject->status = USING;
+            void *ptr = kernelObject->operations.getObject(&kernelObject);
+            slab->allocCallback(slab, type, ptr, 1);
+            return ptr;
         } else {
             // let find the free kernel object from list
-            while (kernelObject->next != nullptr) {
-                if (kernelObject->next->status == FREE) {
-                    // just use it, and mark it as used
-                    // TODO:
-
+            while (kernelObject->list.next != nullptr) {
+                if (getNode(kernelObject->list.next, KernelObject, list)->status == FREE) {
+                    kernelObject->status = USING;
+                    return kernelObject->operations.getObject(&kernelObject);
                 }
-                kernelObject = kernelObject->next;
+                kernelObject = (KernelObject *) kernelObject->list.next;
             }
-
             // oops, not found free kernel object, so let's alloc from heap.
-            // TODO:
+            void *ptr = slab_default_alloc_kernel_object(slab, type);
+            slab->allocCallback(slab, type, ptr, 0);
+            return ptr;
         }
     }
 }
 
-KernelStatus slab_default_free(struct Slab *slab, void *ptr) {
+KernelStatus slab_default_free(struct Slab *slab, KernelObjectType type, void *ptr) {
+    // set kernel object free, then remove from kernel object list, at last insert the removed node to head of list.
+    switch (type) {
+        case KERNEL_OBJECT_THREAD: {
+            Thread *thread = kernelHeap.operations.alloc(&kernelHeap, sizeof(Thread));
+            klist_remove_node(&thread->object.list);
+            thread->object.list.next = slab->kernelObjects[type];
+            slab->kernelObjects[type] = &thread->object.list;
+            thread->object.status = FREE;
+            slab->freeCallback(slab, KERNEL_OBJECT_THREAD, thread);
+            return OK;
+        }
+        case KERNEL_OBJECT_MUTEX: {
+            Mutex *mutex = kernelHeap.operations.alloc(&kernelHeap, sizeof(Mutex));
+            klist_remove_node(&mutex->object.list);
+            mutex->object.list.next = slab->kernelObjects[type];
+            slab->kernelObjects[type] = &mutex->object.list;
+            mutex->object.status = USING;
+            slab->freeCallback(slab, KERNEL_OBJECT_THREAD, mutex);
+            return OK;
+        }
+        case KERNEL_OBJECT_SEMAPHORE: {
+            Semaphore *semaphore = kernelHeap.operations.alloc(&kernelHeap, sizeof(Semaphore));
+            klist_remove_node(&semaphore->object.list);
+            semaphore->object.list.next = slab->kernelObjects[type];
+            slab->kernelObjects[type] = &semaphore->object.list;
+            semaphore->object.status = USING;
+            slab->freeCallback(slab, KERNEL_OBJECT_THREAD, semaphore);
+            return OK;
+        }
+        case KERNEL_OBJECT_FILE_DESCRIPTOR: {
+            FileDescriptor *fileDescriptor = kernelHeap.operations.alloc(&kernelHeap, sizeof(FileDescriptor));
+            klist_remove_node(&fileDescriptor->object.list);
+            fileDescriptor->object.list.next = slab->kernelObjects[type];
+            slab->kernelObjects[type] = &fileDescriptor->object.list;
+            fileDescriptor->object.status = USING;
+            slab->freeCallback(slab, KERNEL_OBJECT_THREAD, fileDescriptor);
+            return OK;
+        }
+    }
 }
 
 void slab_default_set_alloc_callback(struct Slab *slab, SlabAllocCallback callback) {
+    slab->allocCallback = callback;
 }
 
 void slab_default_set_free_callback(struct Slab *slab, SlabFreeCallback callback) {
+    slab->freeCallback = callback;
 }
 
 KernelStatus slab_create(Slab *slab, uint32_t addr, uint32_t size) {
-    slab->allocCallback = slab_default_alloc_callback;
-    slab->freeCallback = slab_default_free_callback;
+    slab->allocCallback = (SlabAllocCallback) slab_default_alloc_callback;
+    slab->freeCallback = (SlabFreeCallback) slab_default_free_callback;
 
     slab->address = addr;
     LogInfo("[KSlab] at: %d. \n", slab->address);
@@ -89,14 +156,12 @@ KernelStatus slab_create(Slab *slab, uint32_t addr, uint32_t size) {
     slab->address = KERNEL_PHYSICAL_START + slabPhysicalPage * PAGE_SIZE;
     LogInfo("[KHeap] kheap at: %d. \n", slab->address);
 
+    slab->operations.setFreeCallback = (SlabOperationSetFreeCallback) slab_default_set_free_callback;
+    slab->operations.setAllocCallback = (SlabOperationSetAllocCallback) slab_default_set_alloc_callback;
 
-    slab->operations.setFreeCallback = slab_default_set_free_callback;
-    slab->operations.setAllocCallback = slab_default_set_alloc_callback;
+    slab->operations.alloc = (SlabOperationAlloc) slab_default_alloc;
+    slab->operations.free = (SlabOperationFree) slab_default_free;
 
-    slab->operations.alloc = slab_default_alloc;
-    slab->operations.free = slab_default_free;
-
-
-    LogInfo("[KSlab] kslab created. \n");
+    LogInfo("[KSlab] kernel slab created. \n");
     return OK;
 }

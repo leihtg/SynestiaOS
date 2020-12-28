@@ -2,13 +2,14 @@
 // Created by XingfengYang on 2020/6/26.
 //
 
+#include "kernel/thread.h"
 #include "arm/kernel_vmm.h"
-#include "kernel/kobject.h"
 #include "kernel/kheap.h"
+#include "kernel/kobject.h"
 #include "kernel/kstack.h"
 #include "kernel/kvector.h"
 #include "kernel/log.h"
-#include "kernel/thread.h"
+#include "kernel/percpu.h"
 #include "kernel/vfs_dentry.h"
 #include "libc/stdlib.h"
 #include "libc/string.h"
@@ -73,7 +74,7 @@ KernelStatus thread_default_exit(struct Thread *thread, uint32_t returnCode) {
 KernelStatus thread_default_kill(struct Thread *thread) {
     KernelStatus freeStatus = OK;
     // Free stack
-    freeStatus = thread->stack->operations.free(thread->stack);
+    freeStatus = thread->stack.operations.free(&thread->stack);
     if (freeStatus != OK) {
         LogError("[KStack]: kStack free failed.\n");
         return freeStatus;
@@ -81,7 +82,7 @@ KernelStatus thread_default_kill(struct Thread *thread) {
     // Free pid
     thread_free_pid(thread->pid);
     // Free FS
-    freeStatus = kvector_free(thread->filesStruct.fileDescriptorTable);
+    freeStatus = thread->filesStruct.fileDescriptorTable.operations.free(&thread->filesStruct.fileDescriptorTable);
     if (freeStatus != OK) {
         LogError("[kVector]: kVector free failed.\n");
         return freeStatus;
@@ -104,13 +105,14 @@ uint32_t filestruct_default_openfile(FilesStruct *filesStruct, DirectoryEntry *d
     fileDescriptor->node.next = nullptr;
     fileDescriptor->pos = 0;
 
-    KernelStatus status = kvector_add(filesStruct->fileDescriptorTable, &fileDescriptor->node);
+    KernelStatus status = filesStruct->fileDescriptorTable.operations.add(&filesStruct->fileDescriptorTable,
+                                                                           &fileDescriptor->node);
     if (status != OK) {
         LogError("[Open]: file open failed, cause add fd table failed.\n");
         return 0;
     }
     // because 0,1,2 are std in, out, err use
-    return (filesStruct->fileDescriptorTable->index - 1) + 3;
+    return (filesStruct->fileDescriptorTable.size - 1) + 3;
 }
 
 Thread *thread_default_copy(Thread *thread, CloneFlags cloneFlags, uint32_t heapStart) {
@@ -148,9 +150,9 @@ Thread *thread_default_copy(Thread *thread, CloneFlags cloneFlags, uint32_t heap
     }
     if (cloneFlags & CLONE_FILES) {
         LogInfo("[Thread]: Clone FILES: '%s'.\n", p->name);
-        p->filesStruct.fileDescriptorTable->index = thread->filesStruct.fileDescriptorTable->index;
-        p->filesStruct.fileDescriptorTable->size = thread->filesStruct.fileDescriptorTable->size;
-        p->filesStruct.fileDescriptorTable->node = thread->filesStruct.fileDescriptorTable->node;
+        p->filesStruct.fileDescriptorTable.size = thread->filesStruct.fileDescriptorTable.size;
+        p->filesStruct.fileDescriptorTable.capacity = thread->filesStruct.fileDescriptorTable.capacity;
+        p->filesStruct.fileDescriptorTable.data = thread->filesStruct.fileDescriptorTable.data;
     }
     if (cloneFlags & CLONE_FS) {
         LogInfo("[Thread]: Clone FS: '%s'.\n", p->name);
@@ -162,33 +164,31 @@ Thread *thread_default_copy(Thread *thread, CloneFlags cloneFlags, uint32_t heap
 }
 
 Thread *thread_create(const char *name, ThreadStartRoutine entry, void *arg, uint32_t priority) {
-    // 1. allocate stack memory from kernel heap for idle task
-    KernelStack *kernelStack = kstack_allocate();
-    if (kernelStack != nullptr) {
-        // 1. init kernel stack
-        kernelStack->operations.clear(kernelStack);
+    Thread *thread = (Thread *) kernelHeap.operations.alloc(&kernelHeap, sizeof(Thread));
 
-        kernelStack->operations.push(kernelStack, entry);     // R15 PC
-        kernelStack->operations.push(kernelStack, entry);     // R14 LR
-        kernelStack->operations.push(kernelStack, 0x12121212);// R12
-        kernelStack->operations.push(kernelStack, 0x11111111);// R11
-        kernelStack->operations.push(kernelStack, 0x10101010);// R10
-        kernelStack->operations.push(kernelStack, 0x09090909);// R09
-        kernelStack->operations.push(kernelStack, 0x08080808);// R08
-        kernelStack->operations.push(kernelStack, 0x07070707);// R07
-        kernelStack->operations.push(kernelStack, 0x06060606);// R06
-        kernelStack->operations.push(kernelStack, 0x05050505);// R05
-        kernelStack->operations.push(kernelStack, 0x04040404);// R04
-        kernelStack->operations.push(kernelStack, 0x03030303);// R03
-        kernelStack->operations.push(kernelStack, 0x02020202);// R02
-        kernelStack->operations.push(kernelStack, 0x01010101);// R01
-        kernelStack->operations.push(kernelStack, arg);       // R00
-        kernelStack->operations.push(kernelStack, 0x600001d3);// cpsr
-
-        Thread *thread = (Thread *) kernelHeap.operations.alloc(&kernelHeap, sizeof(Thread));
+    if (thread != nullptr) {
         thread->magic = THREAD_MAGIC;
         thread->threadStatus = THREAD_INITIAL;
-        thread->stack = kernelStack;
+        kstack_allocate(&thread->stack);
+
+        thread->stack.operations.clear(&thread->stack);
+        thread->stack.operations.push(&thread->stack, (uint32_t) entry);     // R15 PC
+        thread->stack.operations.push(&thread->stack, (uint32_t) entry);     // R14 LR
+        thread->stack.operations.push(&thread->stack, 0x12121212);// R12
+        thread->stack.operations.push(&thread->stack, 0x11111111);// R11
+        thread->stack.operations.push(&thread->stack, 0x10101010);// R10
+        thread->stack.operations.push(&thread->stack, 0x09090909);// R09
+        thread->stack.operations.push(&thread->stack, 0x08080808);// R08
+        thread->stack.operations.push(&thread->stack, 0x07070707);// R07
+        thread->stack.operations.push(&thread->stack, 0x06060606);// R06
+        thread->stack.operations.push(&thread->stack, 0x05050505);// R05
+        thread->stack.operations.push(&thread->stack, 0x04040404);// R04
+        thread->stack.operations.push(&thread->stack, 0x03030303);// R03
+        thread->stack.operations.push(&thread->stack, 0x02020202);// R02
+        thread->stack.operations.push(&thread->stack, 0x01010101);// R01
+        thread->stack.operations.push(&thread->stack, (uint32_t) arg);       // R00
+        thread->stack.operations.push(&thread->stack, 0x600001d3);// cpsr
+
         thread->priority = priority;
         thread->currCpu = INVALID_CPU;
         thread->lastCpu = INVALID_CPU;
@@ -197,6 +197,8 @@ Thread *thread_create(const char *name, ThreadStartRoutine entry, void *arg, uin
         thread->runtimeNs = 0;
         thread->runtimeVirtualNs = 0;
         thread->startTime = ktimer_sys_runtime();
+
+        thread->cpuAffinity = CPU_MASK_ALL;
 
         thread->parentThread = nullptr;
         thread->pid = thread_alloc_pid();
@@ -214,17 +216,17 @@ Thread *thread_create(const char *name, ThreadStartRoutine entry, void *arg, uin
         thread->rbNode.right = nullptr;
         thread->rbNode.color = NODE_RED;
 
-        thread->operations.suspend = thread_default_suspend;
-        thread->operations.resume = thread_default_resume;
-        thread->operations.sleep = thread_default_sleep;
-        thread->operations.detach = thread_default_detach;
-        thread->operations.join = thread_default_join;
-        thread->operations.exit = thread_default_exit;
-        thread->operations.kill = thread_default_kill;
+        thread->operations.suspend = (ThreadOperationSuspend) thread_default_suspend;
+        thread->operations.resume = (ThreadOperationResume) thread_default_resume;
+        thread->operations.sleep = (ThreadOperationSleep) thread_default_sleep;
+        thread->operations.detach = (ThreadOperationDetach) thread_default_detach;
+        thread->operations.join = (ThreadOperationJoin) thread_default_join;
+        thread->operations.exit = (ThreadOperationExit) thread_default_exit;
+        thread->operations.kill = (ThreadOperationKill) thread_default_kill;
         thread->operations.copy = thread_default_copy;
 
-        thread->filesStruct.operations.openFile = filestruct_default_openfile;
-        thread->filesStruct.fileDescriptorTable = kvector_allocate();
+        thread->filesStruct.operations.openFile = (FilesStructOperationOpenFile) filestruct_default_openfile;
+        kvector_allocate(&thread->filesStruct.fileDescriptorTable);
         thread->memoryStruct.sectionInfo.codeSectionAddr = 0;
         thread->memoryStruct.sectionInfo.roDataSectionAddr = 0;
         thread->memoryStruct.sectionInfo.dataSectionAddr = 0;
@@ -236,7 +238,7 @@ Thread *thread_create(const char *name, ThreadStartRoutine entry, void *arg, uin
         thread->memoryStruct.virtualMemory.pageTable = kernel_vmm_get_page_table();
         thread->memoryStruct.heap = kernelHeap;
 
-        thread->object.type = KERNEL_OBJECT_THREAD;
+        thread->object.operations.init(&thread->object, KERNEL_OBJECT_THREAD, USING);
 
         LogInfo("[Thread]: thread '%s' created.\n", thread->name);
         return thread;
@@ -245,7 +247,7 @@ Thread *thread_create(const char *name, ThreadStartRoutine entry, void *arg, uin
     return nullptr;
 }
 
-uint32_t *idle_thread_routine(int arg) {
+_Noreturn uint32_t *idle_thread_routine(int arg) {
     while (1) {
         LogInfo("[Thread]: IDLE: %d \n", arg);
         asm volatile("wfi");
@@ -253,13 +255,13 @@ uint32_t *idle_thread_routine(int arg) {
 }
 
 Thread *thread_create_idle_thread(uint32_t cpuNum) {
-    Thread *idleThread = thread_create("IDLE", idle_thread_routine, cpuNum, IDLE_PRIORITY);
+    Thread *idleThread = thread_create("IDLE", (ThreadStartRoutine) idle_thread_routine, (void *) cpuNum, IDLE_PRIORITY);
     idleThread->cpuAffinity = cpuNum;
     // 2. idle thread
     idleThread->pid = 0;
 
     char idleNameStr[10] = {'\0'};
-    strcpy(idleThread->name, itoa(cpuNum, &idleNameStr, 10));
+    strcpy(idleThread->name, itoa(cpuNum, (char *) &idleNameStr, 10));
     // TODO : other properties, like list
     LogInfo("[Thread]: Idle thread for CPU '%d' created.\n", cpuNum);
     return idleThread;

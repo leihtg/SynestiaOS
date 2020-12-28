@@ -4,6 +4,7 @@
 
 #include "kernel/kvector.h"
 #include "libgui/gui_component.h"
+#include "libgfx/gfx2d.h"
 
 #ifndef __LIBRARY_LIBGUI_WINDOW_H__
 #define __LIBRARY_LIBGUI_WINDOW_H__
@@ -15,11 +16,12 @@ typedef struct GUIWindowHeader {
     Color background;
     Color foreground;
 } GUIWindowHeader;
+
 typedef struct GUIWindow {
     GUIComponent component;
     char *title;
     GUIWindowHeader header;
-    ListNode *children;
+    KernelVector children;
     bool isWindowNeedUpdate;
     bool isShadowNeedUpdate;
     Gfx2DContext context;

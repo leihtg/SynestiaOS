@@ -1,6 +1,5 @@
-#include "libc/macros.h"
-#include "arm/vmm.h"
 #include "kernel/interrupt.h"
+#include "arm/vmm.h"
 #include "kernel/log.h"
 #include "libc/stdlib.h"
 #include "raspi2/timer.h"

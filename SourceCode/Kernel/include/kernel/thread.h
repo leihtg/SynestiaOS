@@ -15,8 +15,8 @@
 #include "kernel/vfs_dentry.h"
 #include "libc/stdint.h"
 
-typedef uint8_t CpuNum;
-typedef uint8_t CpuMask;
+typedef uint32_t CpuNum;
+typedef uint32_t CpuMask;
 #define THREAD_NAME_LENGTH 32
 #define THREAD_MAGIC (0x74687264)
 
@@ -34,26 +34,6 @@ typedef enum CloneFlags {
     CLONE_FS = 0x1 << 1,
     CLONE_FILES = 0x1 << 2,
 } CloneFlags;
-
-typedef enum CPU {
-    CPU_0 = 0,
-    CPU_1,
-    CPU_2,
-    CPU_3,
-    CPU_4,
-    CPU_5,
-    CPU_6,
-    CPU_7,
-    CPU_8,
-    CPU_9,
-    CPU_10,
-    CPU_11,
-    CPU_12,
-    CPU_13,
-    CPU_14,
-    CPU_15,
-    INVALID_CPU = 255,
-} CPU;
 
 typedef enum ThreadStatus {
     THREAD_INITIAL = 0,
@@ -78,7 +58,7 @@ typedef struct CpuContextSave {
     uint32_t sp;
     uint32_t pc;
     uint32_t extra[2];
-} __attribute__((packed)) CpuContextSave;
+} CpuContextSave;
 
 typedef uint32_t (*ThreadStartRoutine)(void *arg);
 
@@ -91,7 +71,7 @@ typedef struct SectionInfo {
     uint32_t dataEndSectionAddr;
     uint32_t bssSectionAddr;
     uint32_t bssEndSectionAddr;
-} __attribute__((packed)) SectionInfo;
+} SectionInfo;
 
 
 #define FD_STDIN 0
@@ -102,6 +82,7 @@ typedef struct FileDescriptor {
     uint32_t pos;
     DirectoryEntry *directoryEntry;
     ListNode node;
+    KernelObject object;
 } FileDescriptor;
 
 typedef uint32_t (*FilesStructOperationOpenFile)(struct FilesStruct *filesStruct,
@@ -112,7 +93,7 @@ typedef struct FilesStructOperations {
 } FilesStructOperations;
 
 typedef struct FilesStruct {
-    KernelVector *fileDescriptorTable;
+    KernelVector fileDescriptorTable;
     FilesStructOperations operations;
 } FilesStruct;
 
@@ -161,7 +142,7 @@ typedef struct Thread {
     struct Thread *parentThread;
     uint64_t pid;
     char name[THREAD_NAME_LENGTH];
-    KernelStack *stack;
+    KernelStack stack;
     ThreadStartRoutine entry;
 
     uint32_t flags;
@@ -169,7 +150,7 @@ typedef struct Thread {
 
     ThreadStatus threadStatus;
     ListNode threadList;
-    KQueue threadReadyQueue;
+    KQueueNode threadReadyQueue;
 
     uint32_t priority;
 
@@ -178,12 +159,10 @@ typedef struct Thread {
     uint32_t runtimeNs;
     uint32_t runtimeVirtualNs;
 
-    bool interruptable;
 
     CpuNum lastCpu;
     CpuNum currCpu;
     CpuMask cpuAffinity;
-    void *arg;
 
     uint32_t returnCode;
 
@@ -194,7 +173,10 @@ typedef struct Thread {
 
     KernelObject object;
 
-} __attribute__((packed)) Thread;
+    uint32_t interruptable;
+    void *arg;
+
+} Thread;
 
 Thread *thread_create(const char *name, ThreadStartRoutine entry, void *arg, uint32_t priority);
 
